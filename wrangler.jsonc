@@ -1,0 +1,24 @@
+{
+  // Enhanc Media admin — one Worker: the admin interface from `out/`, plus its API under /api/.
+  // Deployed separately from the website, at admin.enhancmedia.com, behind Cloudflare Access.
+  // Workers Builds: build command `npm run build`, deploy command `npx wrangler deploy`.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "enhancmedia-admin",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "admin.enhancmedia.com", "custom_domain": true }],
+  "assets": {
+    "directory": "./out",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // The Worker checks the Access token before serving anything, the interface included.
+    "run_worker_first": true
+  },
+  // All configuration is set in the Cloudflare dashboard (Worker → Settings → Variables and
+  // Secrets), never here; keep_vars stops a deploy from removing it. Names and meaning:
+  // README → "Variables", and .dev.vars.example.
+  "keep_vars": true,
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/* The website's brand tokens, so the admin feels like part of the same house. */
+@theme {
+  --color-ink: #111111;
+  --color-charcoal: #202020;
+  --color-paper: #f7f7f5;
+  --color-gold: #b99a70;
+  --color-gold-ink: #86694a;
+  --color-muted: #6a6a6a;
+  --color-mist: #a3a3a0;
+  --color-line: #e2e0da;
+  --color-danger: #9b2c2c;
+  --color-ok: #2f6b3a;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  html { background: var(--color-paper); color: var(--color-ink); -webkit-font-smoothing: antialiased; }
+  :focus-visible { outline: 2px solid var(--color-gold); outline-offset: 2px; }
+}
+
+@layer components {
+  .input {
+    @apply block w-full rounded-md border border-line bg-white px-3 py-2 text-[0.95rem] text-ink placeholder:text-mist focus:border-ink focus:outline-none;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-ink disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-ink px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-charcoal disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-1.5 text-sm font-medium text-danger transition-colors hover:border-danger disabled:opacity-50;
+  }
+  .label { @apply block text-[0.8rem] font-semibold text-ink; }
+  .help { @apply mt-1 text-xs text-muted; }
+}
