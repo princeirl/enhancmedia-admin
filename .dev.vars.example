@@ -17,7 +17,7 @@ GITHUB_TOKEN=                 # secret: fine-grained token, repository princeirl
 # MAIN_BRANCH=main
 # DRAFT_BRANCH=content-draft
 # SITE_URL=https://www.enhancmedia.com
-# PREVIEW_URL=https://content-draft-enhancmedia-website.<account-subdomain>.workers.dev
+# PREVIEW_URL=https://content-draft-enhancmedia.<account-subdomain>.workers.dev
 
 # Local development only — ignored unless the request is for localhost
 # DEV_EMAIL=you@enhancmedia.com          # skip sign-in entirely

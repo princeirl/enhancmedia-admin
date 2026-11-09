@@ -86,7 +86,7 @@ None live in `wrangler.jsonc` or in GitHub; `keep_vars: true` stops deploys from
 | `MAIL_FROM_NAME` | Text | Default `Enhanc Media Admin` |
 | `RESEND_API_KEY` / `BREVO_API_KEY` | Secret | Only instead of ZeptoMail (Brevo needs its authorised-IP blocking off: Workers have no fixed IP) |
 | `GITHUB_TOKEN` | Secret, required | Fine-grained token for `princeirl/enhancmedia` only: *Contents: Read and write*, *Commit statuses: Read* (and *Checks: Read* if offered). The admin uses it to read and commit the website's content. |
-| `PREVIEW_URL` | Text | The website's `content-draft` preview URL, e.g. `https://content-draft-enhancmedia-website.<subdomain>.workers.dev` |
+| `PREVIEW_URL` | Text | The website's `content-draft` preview URL, e.g. `https://content-draft-enhancmedia.<subdomain>.workers.dev` |
 | `SITE_URL` | Text | Default `https://www.enhancmedia.com` |
 | `REPO_OWNER`, `REPO_NAME` | Text | Default `princeirl`, `enhancmedia` |
 | `MAIN_BRANCH`, `DRAFT_BRANCH` | Text | Default `main`, `content-draft` |
@@ -97,7 +97,7 @@ None live in `wrangler.jsonc` or in GitHub; `keep_vars: true` stops deploys from
 
 1. **ZeptoMail** — add and verify `enhancmedia.com` (DKIM TXT + bounce CNAME in Cloudflare DNS;
    Zoho Mail records untouched), copy the agent's Send Mail token.
-2. **Website builds** — connect `princeirl/enhancmedia` to the Worker `enhancmedia-website` in
+2. **Website builds** — connect `princeirl/enhancmedia` to the Worker `enhancmedia` in
    Workers Builds, with the settings in the website README → Deployment, and turn on builds for
    non-production branches. The admin creates the branch `content-draft` on first use.
 3. **Admin Worker** — connect this repository to a Worker named `enhancmedia-admin` in Workers
