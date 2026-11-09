@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Editor, Loading, useSorted } from "@/components/Editor";
+import { Login } from "@/components/Login";
 import { ApiError, api, type Me, type State } from "@/lib/api";
 import { Store } from "@/lib/docs";
 import { FORMAT, validateSchema } from "@/lib/schema.mjs";
@@ -22,6 +23,8 @@ function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [schemas, setSchemas] = useState<Schema[] | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const [boot, setBoot] = useState(0);
   const [state, setState] = useState<State | null>(null);
   const [menu, setMenu] = useState(false);
   const dirty = useRef(false);
@@ -40,6 +43,7 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
+        setSignedOut(false);
         setMe(await api.me());
         await api.sync(); // brings website changes (new pages, new fields) into the draft
         const { schemas } = await api.schemas();
@@ -52,10 +56,11 @@ function App() {
         setSchemas(schemas);
         await refresh();
       } catch (e) {
-        setFatal(e instanceof ApiError && e.status === 401 ? "You are not signed in. Reload the page to sign in." : e instanceof Error ? e.message : "The admin could not start.");
+        if (e instanceof ApiError && e.status === 401) setSignedOut(true);
+        else setFatal(e instanceof Error ? e.message : "The admin could not start.");
       }
     })();
-  }, [refresh]);
+  }, [refresh, boot]);
 
   // While a preview is building, check every 10 seconds.
   useEffect(() => {
@@ -86,6 +91,7 @@ function App() {
 
   const groups = useSorted(schemas ?? []);
 
+  if (signedOut) return <Login onDone={() => setBoot((b) => b + 1)} />;
   if (fatal) return <Centered><p className="max-w-md text-center text-sm text-danger">{fatal}</p></Centered>;
   if (!me || !schemas || !store) return <Centered><Loading /></Centered>;
 
@@ -187,6 +193,9 @@ function TopBar({ me, state, refresh, onMenu, nav }: { me: Me; state: State | nu
         {busy === "publish" ? "Publishing…" : `Publish${changes ? ` (${changes})` : ""}`}
       </button>
       <span className="hidden max-w-[12rem] truncate text-xs text-mist lg:inline" title={me.email}>{me.email}</span>
+      <button className="text-xs text-mist hover:text-white" onClick={async () => { await api.logout().catch(() => null); location.href = "/"; }}>
+        Sign out
+      </button>
     </header>
   );
 }

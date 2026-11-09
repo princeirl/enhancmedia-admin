@@ -3,19 +3,22 @@
 # .dev.vars (git-ignored) and fill it in.
 
 # Required in production
+ADMIN_EMAILS=                 # who may sign in, comma-separated
+SESSION_SECRET=               # secret: at least 32 random characters (openssl rand -base64 32)
+BREVO_API_KEY=                # secret: Brevo → SMTP & API → API keys
+MAIL_FROM=                    # a sender address verified in Brevo, e.g. admin@enhancmedia.com
 GITHUB_TOKEN=                 # secret: fine-grained token, repository princeirl/enhancmedia only
-ACCESS_TEAM_DOMAIN=           # https://<team>.cloudflareaccess.com
-ACCESS_AUD=                   # the Access application's AUD tag
 
 # Optional (defaults shown)
+# MAIL_FROM_NAME=Enhanc Media
 # REPO_OWNER=princeirl
 # REPO_NAME=enhancmedia
 # MAIN_BRANCH=main
 # DRAFT_BRANCH=content-draft
 # SITE_URL=https://www.enhancmedia.com
 # PREVIEW_URL=https://content-draft-enhancmedia-website.<account-subdomain>.workers.dev
-# ALLOWED_EMAILS=             # a second list of editors on top of the Access policy, comma-separated
 
 # Local development only — ignored unless the request is for localhost
-# DEV_EMAIL=you@enhancmedia.com
+# DEV_EMAIL=you@enhancmedia.com          # skip sign-in entirely
 # DEV_GITHUB_API=http://127.0.0.1:8790   # scripts/mock-github.mjs
+# Without BREVO_API_KEY on localhost, sign-in codes are printed in the wrangler dev log.

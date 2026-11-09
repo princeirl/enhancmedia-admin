@@ -54,3 +54,59 @@ test("content is checked against the schema", () => {
   const { tags, ...missing } = ok;
   assert.ok(validateDocument(schema, missing).some((e) => e.includes("missing")));
 });
+
+// ---------- sign-in ----------
+import * as auth from "../worker/auth.ts";
+const KEY = "k".repeat(40);
+
+test("a code works once, for its own challenge, before it expires", async () => {
+  const code = auth.newCode();
+  assert.match(code, /^\d{6}$/);
+  const ch = await auth.makeChallenge(KEY, "a@b.co", code);
+  assert.equal(await auth.checkChallenge(KEY, ch, code), "a@b.co");
+  const wrong = code === "000000" ? "000001" : "000000";
+  assert.equal(await auth.checkChallenge(KEY, ch, wrong), null);
+  assert.equal(await auth.checkChallenge("x".repeat(40), ch, code), null, "another secret");
+  const [p, s] = ch.split(".");
+  const forged = Buffer.from(JSON.stringify({ e: "evil@x.co", x: 9e9, n: "a" })).toString("base64url");
+  assert.equal(await auth.checkChallenge(KEY, `${forged}.${s}`, code), null, "changed address");
+  const old = await auth.makeChallenge(KEY, "a@b.co", code, -1);
+  assert.equal(await auth.checkChallenge(KEY, old, code), null, "expired");
+  assert.equal(auth.challengeEmail(ch), "a@b.co");
+  void p;
+});
+
+test("sessions are signed and expire", async () => {
+  const s = await auth.makeSession(KEY, "a@b.co");
+  assert.equal(await auth.checkSession(KEY, s), "a@b.co");
+  assert.equal(await auth.checkSession("y".repeat(40), s), null);
+  assert.equal(await auth.checkSession(KEY, s.replace(/.$/, (c) => (c === "A" ? "B" : "A"))), null);
+  assert.equal(await auth.checkSession(KEY, await auth.makeSession(KEY, "a@b.co", -1)), null);
+  // a challenge is not a session
+  assert.equal(await auth.checkSession(KEY, await auth.makeChallenge(KEY, "a@b.co", "123456")), null);
+});
+
+test("the editor list and cookies", () => {
+  assert.deepEqual(auth.allowedEmails(" A@b.co, c@d.co ,"), ["a@b.co", "c@d.co"]);
+  const r = new Request("https://x", { headers: { Cookie: "a=1; em_session=abc.def=; b=2" } });
+  assert.equal(auth.readCookie(r, "em_session"), "abc.def=");
+  assert.match(auth.cookie("em_session", "v", 60), /HttpOnly; SameSite=Strict; Secure$/);
+});
+
+test("the code email goes to the Brevo transactional API", async () => {
+  const real = globalThis.fetch;
+  let seen;
+  globalThis.fetch = async (url, init) => { seen = { url, init }; return new Response("{}", { status: 201 }); };
+  try {
+    assert.equal(await auth.sendCode({ apiKey: "KEY", from: "admin@enhancmedia.com", fromName: "Enhanc Media" }, "a@b.co", "123456"), true);
+  } finally {
+    globalThis.fetch = real;
+  }
+  assert.equal(seen.url, "https://api.brevo.com/v3/smtp/email");
+  assert.equal(seen.init.headers["api-key"], "KEY");
+  const body = JSON.parse(seen.init.body);
+  assert.deepEqual(body.sender, { email: "admin@enhancmedia.com", name: "Enhanc Media" });
+  assert.deepEqual(body.to, [{ email: "a@b.co" }]);
+  assert.match(body.subject, /123456/);
+  assert.match(body.textContent, /123456/);
+});

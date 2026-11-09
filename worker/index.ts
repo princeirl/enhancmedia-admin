@@ -5,21 +5,29 @@
  * website's content files in the website repository, on the draft branch only; Publish merges
  * the draft into main. Nothing is stored here.
  *
- * Every request must carry a valid Cloudflare Access token (worker/access.ts). Requests that
- * change something must also come from this origin with the X-Admin header, so another site
- * cannot make a signed-in editor's browser send them.
+ * Every API request needs a valid session: sign-in is by email and a one-time code
+ * (worker/auth.ts), open only to the addresses in ADMIN_EMAILS. Requests that change something
+ * must also come from this origin with the X-Admin header, so another site cannot make a
+ * signed-in editor's browser send them. The interface files hold no data and are served to anyone;
+ * everything they show comes from the API.
  */
-import { verifyAccess } from "./access";
+import * as auth from "./auth";
 import * as git from "./git";
 import { MAX_UPLOAD, safeName, sniffImage, unsafeSvg } from "./upload";
 
 /**
  * Configuration. Everything is set in the Cloudflare dashboard (Worker → Settings → Variables and
  * Secrets); wrangler.jsonc holds none of it and has keep_vars, so deploys never remove it.
- * Only GITHUB_TOKEN, ACCESS_TEAM_DOMAIN and ACCESS_AUD are required; the rest have defaults.
+ * Required: ADMIN_EMAILS, SESSION_SECRET, BREVO_API_KEY, MAIL_FROM, GITHUB_TOKEN. The rest have defaults.
  */
 interface Env {
   ASSETS: Fetcher;
+  AUTH_LIMITER?: RateLimit;
+  ADMIN_EMAILS?: string; // comma-separated: who may sign in
+  SESSION_SECRET?: string; // secret, at least 32 random characters
+  BREVO_API_KEY?: string; // secret
+  MAIL_FROM?: string; // a sender verified in Brevo
+  MAIL_FROM_NAME?: string; // default "Enhanc Media"
   GITHUB_TOKEN?: string; // secret
   REPO_OWNER?: string; // default princeirl
   REPO_NAME?: string; // default enhancmedia
@@ -27,25 +35,19 @@ interface Env {
   DRAFT_BRANCH?: string; // default content-draft
   SITE_URL?: string; // default https://www.enhancmedia.com
   PREVIEW_URL?: string; // the content-draft preview URL of the website Worker
-  ACCESS_TEAM_DOMAIN?: string; // https://<team>.cloudflareaccess.com
-  ACCESS_AUD?: string; // the Access application's AUD tag
-  ALLOWED_EMAILS?: string; // optional, comma-separated: a second list on top of the Access policy
   DEV_EMAIL?: string; // local development only (.dev.vars); honoured only on localhost
   DEV_GITHUB_API?: string; // local development only: a stand-in for the GitHub API (scripts/mock-github.mjs); honoured only on localhost
 }
 
 const MAX_TEXT = 1024 * 1024;
+const isLocal = (url: URL) => url.hostname === "localhost" || url.hostname === "127.0.0.1";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) {
-      // The interface itself is also behind Access; without a valid token it is not served.
-      const who = await identify(request, env, url);
-      if (!who) return new Response("Not signed in.", { status: 401 });
-      return env.ASSETS.fetch(request);
-    }
+    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     try {
+      if (url.pathname.startsWith("/api/auth/")) return await authRoutes(request, env, url);
       return await api(request, env, url);
     } catch (e) {
       if (e instanceof git.GitError) {
@@ -58,17 +60,82 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+/** The secret signing sessions and codes; missing or short means sign-in is closed. */
+function secret(env: Env): string | null {
+  return env.SESSION_SECRET && env.SESSION_SECRET.length >= 32 ? env.SESSION_SECRET : null;
+}
+
 async function identify(request: Request, env: Env, url: URL): Promise<string | null> {
-  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (local && env.DEV_EMAIL) return env.DEV_EMAIL.toLowerCase();
-  if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return null; // closed by default
-  const token = request.headers.get("Cf-Access-Jwt-Assertion");
-  if (!token) return null;
-  const email = await verifyAccess(token, env.ACCESS_TEAM_DOMAIN.replace(/\/$/, ""), env.ACCESS_AUD);
-  if (!email) return null;
-  const allow = (env.ALLOWED_EMAILS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  if (allow.length && !allow.includes(email)) return null;
+  if (isLocal(url) && env.DEV_EMAIL) return env.DEV_EMAIL.toLowerCase();
+  const key = secret(env);
+  const token = auth.readCookie(request, auth.SESSION_COOKIE);
+  if (!key || !token) return null; // closed by default
+  const email = await auth.checkSession(key, token);
+  if (!email || !auth.allowedEmails(env.ADMIN_EMAILS).includes(email)) return null;
   return email;
+}
+
+const sameOrigin = (request: Request, url: URL) => request.headers.get("Origin") === url.origin && request.headers.get("X-Admin") === "1";
+
+async function limited(env: Env, key: string): Promise<boolean> {
+  if (!env.AUTH_LIMITER) return false;
+  const { success } = await env.AUTH_LIMITER.limit({ key });
+  return !success;
+}
+
+async function authRoutes(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== "POST") return json({ message: "Method not allowed." }, 405);
+  if (!sameOrigin(request, url)) return json({ message: "Forbidden." }, 403);
+  const local = isLocal(url);
+  const ip = request.headers.get("CF-Connecting-IP") ?? "local";
+
+  if (url.pathname === "/api/auth/logout") {
+    return json({ ok: true }, 200, { "Set-Cookie": auth.cookie(auth.SESSION_COOKIE, "", 0, "/", !local) });
+  }
+
+  const key = secret(env);
+  if (!key || !env.ADMIN_EMAILS || (!env.BREVO_API_KEY && !local) || (!env.MAIL_FROM && !local)) {
+    return json({ message: "Sign-in is not set up yet (ADMIN_EMAILS, SESSION_SECRET, BREVO_API_KEY, MAIL_FROM)." }, 503);
+  }
+  const body = (await request.json().catch(() => ({}))) as { email?: string; code?: string };
+
+  if (url.pathname === "/api/auth/request") {
+    const email = String(body.email ?? "").trim().toLowerCase();
+    if (!auth.validEmail(email)) return json({ message: "Please enter a valid email address." }, 422);
+    if ((await limited(env, `req:ip:${ip}`)) || (await limited(env, `req:em:${email}`))) {
+      return json({ message: "Too many requests. Please wait a minute and try again." }, 429);
+    }
+    const code = auth.newCode();
+    const listed = auth.allowedEmails(env.ADMIN_EMAILS).includes(email);
+    if (listed) {
+      if (env.BREVO_API_KEY) {
+        const sent = await auth.sendCode({ apiKey: env.BREVO_API_KEY, from: env.MAIL_FROM!, fromName: env.MAIL_FROM_NAME || "Enhanc Media" }, email, code);
+        if (!sent) return json({ message: "The code could not be sent just now. Please try again shortly." }, 502);
+      } else if (local) {
+        console.log(`auth (local, no email sent): code for ${email} is ${code}`);
+      }
+    }
+    // Same reply and a challenge cookie either way, so the form reveals nothing about who is listed.
+    const challenge = await auth.makeChallenge(key, email, listed ? code : auth.newCode() + "x");
+    return json({ ok: true }, 200, { "Set-Cookie": auth.cookie(auth.CHALLENGE_COOKIE, challenge, auth.CODE_TTL, "/api/auth", !local) });
+  }
+
+  if (url.pathname === "/api/auth/verify") {
+    const challenge = auth.readCookie(request, auth.CHALLENGE_COOKIE);
+    if (!challenge) return json({ message: "The code has expired. Ask for a new one." }, 401);
+    const who = auth.challengeEmail(challenge) ?? "unknown";
+    if ((await limited(env, `ver:ip:${ip}`)) || (await limited(env, `ver:em:${who}`))) {
+      return json({ message: "Too many attempts. Please wait a minute and try again." }, 429);
+    }
+    const email = await auth.checkChallenge(key, challenge, String(body.code ?? "").trim());
+    if (!email || !auth.allowedEmails(env.ADMIN_EMAILS).includes(email)) return json({ message: "That code is not right, or it has expired." }, 401);
+    const session = await auth.makeSession(key, email);
+    const headers = new Headers({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    headers.append("Set-Cookie", auth.cookie(auth.SESSION_COOKIE, session, auth.SESSION_TTL, "/", !local));
+    headers.append("Set-Cookie", auth.cookie(auth.CHALLENGE_COOKIE, "", 0, "/api/auth", !local));
+    return new Response(JSON.stringify({ email }), { status: 200, headers });
+  }
+  return json({ message: "Not found." }, 404);
 }
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
@@ -76,13 +143,10 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   if (!email) return json({ message: "Not signed in." }, 401);
 
   const write = request.method !== "GET" && request.method !== "HEAD";
-  if (write) {
-    if (request.headers.get("Origin") !== url.origin || request.headers.get("X-Admin") !== "1") return json({ message: "Forbidden." }, 403);
-  }
+  if (write && !sameOrigin(request, url)) return json({ message: "Forbidden." }, 403);
   if (!env.GITHUB_TOKEN) return json({ message: "The admin is not connected to the website repository yet (GITHUB_TOKEN)." }, 503);
 
-  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  const apiBase = local && env.DEV_GITHUB_API ? env.DEV_GITHUB_API : "https://api.github.com";
+  const apiBase = isLocal(url) && env.DEV_GITHUB_API ? env.DEV_GITHUB_API : "https://api.github.com";
   const repo: git.Repo = {
     owner: env.REPO_OWNER || "princeirl",
     name: env.REPO_NAME || "enhancmedia",
@@ -242,9 +306,9 @@ function writable(p: string | undefined): string | null {
 
 const clean = (s: unknown) => (typeof s === "string" ? s.replace(/[\r\n]+/g, " ").trim().slice(0, 200) : "");
 
-function json(data: unknown, status = 200): Response {
+function json(data: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...extra },
   });
 }

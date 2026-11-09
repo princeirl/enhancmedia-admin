@@ -2,7 +2,8 @@
 
 Edits every text, image, menu and setting of www.enhancmedia.com. Same stack as the website
 (Next.js static export, TypeScript, Tailwind CSS, one Cloudflare Worker), its own repository,
-deployed separately at **admin.enhancmedia.com**.
+deployed separately at **admin.enhancmedia.com**. Editors sign in with their email address and
+a one-time code sent by email (Brevo).
 
 Plan and decisions: `.project/plans/2026-11/2026-11-09-admin-panel.md` and
 `.project/memory/2026-11-09-admin-panel-decision.md` in the project records.
@@ -10,8 +11,8 @@ Plan and decisions: `.project/plans/2026-11/2026-11-09-admin-panel.md` and
 ## How it works
 
 ```
-browser ── Cloudflare Access (listed emails, one-time code) ── admin Worker
-                                                                 │  verifies the Access token itself
+browser ── admin Worker ── sign-in: listed email + 6-digit code (sent through Brevo)
+                                                                 │  signed session cookie, 12 hours
                                                                  │  GitHub API, fine-grained token
                                                                  ▼
                                   github.com/princeirl/enhancmedia  (the website repository)
@@ -41,7 +42,7 @@ browser ── Cloudflare Access (listed emails, one-time code) ── admin Wor
 app/          the interface (one client-side page)
 components/   the editor and one control per field type
 lib/          API client, file parsing, schema types, schema.mjs (copy of the website's)
-worker/       the Worker: Access check, API, GitHub calls (git.ts), upload checks
+worker/       the Worker: sign-in (auth.ts), API, GitHub calls (git.ts), upload checks
 scripts/      schema-sync check, unit tests, a local stand-in for the GitHub API
 ```
 
@@ -51,43 +52,57 @@ scripts/      schema-sync check, unit tests, a local stand-in for the GitHub API
 |---|---|
 | `npm run dev` | Builds and runs locally at http://127.0.0.1:8788 (see "Local development") |
 | `npm run typecheck` | Type-checks the interface and the Worker |
-| `npm test` | Unit tests: upload checks, schema validation |
+| `npm test` | Unit tests: upload checks, schema validation, sign-in |
 | `npm run check:schema` | Confirms `lib/schema.mjs` matches `../website/lib/schema.mjs` |
 | `npm run deploy` | Type check, build, deploy (from a machine with a Cloudflare login) |
+
+## Signing in
+
+1. The editor enters their email. If it is in `ADMIN_EMAILS`, a 6-digit code is emailed through
+   Brevo. The page answers the same either way, so it never reveals who is listed.
+2. The editor enters the code (valid 10 minutes) and gets a session for 12 hours.
+
+- Nothing is stored: the code challenge and the session are HMAC-signed cookies (`HttpOnly`,
+  `Secure`, `SameSite=Strict`) keyed by `SESSION_SECRET`.
+- Requests for a code and code attempts are limited to 5 a minute per address and per IP
+  (`AUTH_LIMITER` in `wrangler.jsonc`), so guessing a code is impractical.
+- **Add or remove an editor:** edit `ADMIN_EMAILS`. A removed address is refused at its next
+  request, even inside a live session.
+- **Sign everyone out:** change `SESSION_SECRET`.
+- Without the sign-in variables the admin refuses every request (closed by default).
 
 ## Variables
 
 Set in the Cloudflare dashboard: Worker `enhancmedia-admin` → Settings → Variables and Secrets.
 None live in `wrangler.jsonc` or in GitHub; `keep_vars: true` stops deploys from removing them.
-Without the three required values the Worker refuses every request (closed by default).
 
 | Name | Type | Value |
 |---|---|---|
-| `GITHUB_TOKEN` | Secret, required | Fine-grained token for `princeirl/enhancmedia` only: *Contents: Read and write*, *Commit statuses: Read* (and *Checks: Read* if offered). From the vault. |
-| `ACCESS_TEAM_DOMAIN` | Text, required | `https://<team>.cloudflareaccess.com` |
-| `ACCESS_AUD` | Text, required | The Access application's *AUD tag* |
+| `ADMIN_EMAILS` | Text, required | Who may sign in, comma-separated: `prince@enhancmedia.com,editor@enhancmedia.com` |
+| `SESSION_SECRET` | Secret, required | At least 32 random characters: `openssl rand -base64 32` |
+| `BREVO_API_KEY` | Secret, required | Brevo → SMTP & API → API keys → *Generate a new API key* |
+| `MAIL_FROM` | Text, required | A sender verified in Brevo (Senders, domains & dedicated IPs), e.g. `admin@enhancmedia.com` |
+| `MAIL_FROM_NAME` | Text | Default `Enhanc Media` |
+| `GITHUB_TOKEN` | Secret, required | Fine-grained token for `princeirl/enhancmedia` only: *Contents: Read and write*, *Commit statuses: Read* (and *Checks: Read* if offered). The admin uses it to read and commit the website's content. |
 | `PREVIEW_URL` | Text | The website's `content-draft` preview URL, e.g. `https://content-draft-enhancmedia-website.<subdomain>.workers.dev` |
 | `SITE_URL` | Text | Default `https://www.enhancmedia.com` |
 | `REPO_OWNER`, `REPO_NAME` | Text | Default `princeirl`, `enhancmedia` |
 | `MAIN_BRANCH`, `DRAFT_BRANCH` | Text | Default `main`, `content-draft` |
-| `ALLOWED_EMAILS` | Text | Optional second list of editors, comma-separated |
 
 `.dev.vars.example` lists the same names for local work.
 
 ## Setting up (once)
 
-1. **Website builds** — connect `princeirl/enhancmedia` to the Worker `enhancmedia-website` in
+1. **Brevo** — verify the sender address or, better, the domain `enhancmedia.com` (Brevo →
+   Senders, domains & dedicated IPs; add the DNS records it shows in Cloudflare DNS), then create
+   an API key.
+2. **Website builds** — connect `princeirl/enhancmedia` to the Worker `enhancmedia-website` in
    Workers Builds, with the settings in the website README → Deployment, and turn on builds for
    non-production branches. The admin creates the branch `content-draft` on first use.
-2. **Access** — Zero Trust → Access → Applications → *Self-hosted* for `admin.enhancmedia.com`,
-   policy *Allow* with the editors' emails, login by one-time PIN. Protect the website Worker's
-   preview URLs with Access too (Worker → Settings → Domains & Routes → Preview URLs).
 3. **Admin Worker** — connect this repository to a Worker named `enhancmedia-admin` in Workers
-   Builds: build command `npm run build`, deploy command `npx wrangler deploy`. Or deploy from a
-   machine with `npm run deploy`. Wrangler attaches `admin.enhancmedia.com` as a custom domain.
+   Builds: build command `npm run build`, deploy command `npx wrangler deploy`. Wrangler attaches
+   `admin.enhancmedia.com` as a custom domain.
 4. **Variables** — set the table above in the dashboard, then redeploy (or *Retry build*).
-
-Adding or removing an editor is a change to the Access policy; nothing here changes.
 
 ## Local development
 
@@ -97,8 +112,10 @@ node scripts/mock-github.mjs ../website 8790 &        # in-memory stand-in for G
 npm run build && npx wrangler dev --port 8788 --ip 127.0.0.1 --local-upstream 127.0.0.1:8788
 ```
 
-`DEV_EMAIL` and `DEV_GITHUB_API` are honoured only when the request is for localhost; in
-production they do nothing. Point `DEV_GITHUB_API` away (and set a real `GITHUB_TOKEN`) to work
+`DEV_EMAIL` (skips sign-in) and `DEV_GITHUB_API` are honoured only when the request is for
+localhost; in production they do nothing. To try the sign-in itself locally, leave out
+`DEV_EMAIL`, set `ADMIN_EMAILS` and `SESSION_SECRET`: without `BREVO_API_KEY` the code is printed
+in the wrangler dev log. Point `DEV_GITHUB_API` away (and set a real `GITHUB_TOKEN`) to work
 against the real repository. `.dev.vars` is git-ignored.
 
 ## When the website needs a new kind of field
@@ -111,6 +128,6 @@ ever declare a newer `$format`, the admin stops and says it needs an update rath
 ## Leaving GitHub or Cloudflare
 
 - Another git host: re-implement `worker/git.ts` (one module) against its API.
-- Another login gate: replace `worker/access.ts`; any proxy that signs a verified email works.
+- Another email service: replace `sendCode()` in `worker/auth.ts` (one function).
 - Another host: the interface is static files in `out/`; the API is one Worker file with no
   platform storage.
