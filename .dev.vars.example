@@ -3,11 +3,14 @@
 # .dev.vars (git-ignored) and fill it in.
 
 # Required in production
-ADMIN_EMAILS=                 # who may sign in, comma-separated
 SESSION_SECRET=               # secret: at least 32 random characters (openssl rand -base64 32)
-BREVO_API_KEY=                # secret: Brevo → SMTP & API → API keys
-MAIL_FROM=                    # a sender address verified in Brevo, e.g. admin@enhancmedia.com
 GITHUB_TOKEN=                 # secret: fine-grained token, repository princeirl/enhancmedia only
+ADMIN_USERS=                  # secret: email:password,email:password (passwords 12+ characters, no commas)
+
+# Email-code sign-in instead (used only when ADMIN_USERS is not set)
+# ADMIN_EMAILS=               # who may sign in, comma-separated
+# BREVO_API_KEY=              # secret: Brevo → SMTP & API → API keys
+# MAIL_FROM=                  # a sender address verified in Brevo
 
 # Optional (defaults shown)
 # MAIL_FROM_NAME=Enhanc Media
@@ -21,4 +24,4 @@ GITHUB_TOKEN=                 # secret: fine-grained token, repository princeirl
 # Local development only — ignored unless the request is for localhost
 # DEV_EMAIL=you@enhancmedia.com          # skip sign-in entirely
 # DEV_GITHUB_API=http://127.0.0.1:8790   # scripts/mock-github.mjs
-# Without BREVO_API_KEY on localhost, sign-in codes are printed in the wrangler dev log.
+# Code sign-in without BREVO_API_KEY on localhost prints the codes in the wrangler dev log.

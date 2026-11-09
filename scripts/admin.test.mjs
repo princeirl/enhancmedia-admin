@@ -110,3 +110,12 @@ test("the code email goes to the Brevo transactional API", async () => {
   assert.match(body.subject, /123456/);
   assert.match(body.textContent, /123456/);
 });
+
+test("password sign-in: parsing and comparison", async () => {
+  const u = auth.parseUsers(" Prince@EnhancMedia.com : correct-horse-battery , short@x.co:abc, bad");
+  assert.deepEqual([...u.keys()], ["prince@enhancmedia.com"], "short passwords and malformed entries are ignored");
+  assert.equal(u.get("prince@enhancmedia.com"), "correct-horse-battery");
+  assert.equal(await auth.samePassword(KEY, "correct-horse-battery", "correct-horse-battery"), true);
+  assert.equal(await auth.samePassword(KEY, "correct-horse-batterY", "correct-horse-battery"), false);
+  assert.equal(await auth.samePassword(KEY, "", "correct-horse-battery"), false);
+});

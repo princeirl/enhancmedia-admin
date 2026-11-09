@@ -142,3 +142,27 @@ export async function sendCode(
   if (!res.ok) console.error("auth: email not sent", res.status, (await res.text()).slice(0, 200));
   return res.ok;
 }
+
+// ---------- password sign-in ----------
+
+/**
+ * ADMIN_USERS: "email:password,email:password". Passwords may not contain commas and must be at
+ * least 12 characters; shorter ones are ignored so a weak password can never sign in.
+ */
+export function parseUsers(list: string | undefined): Map<string, string> {
+  const users = new Map<string, string>();
+  for (const entry of (list ?? "").split(",")) {
+    const i = entry.indexOf(":");
+    if (i < 1) continue;
+    const email = entry.slice(0, i).trim().toLowerCase();
+    const password = entry.slice(i + 1).trim();
+    if (password.length >= 12) users.set(email, password);
+    else console.error(`auth: password for ${email} is shorter than 12 characters; that user cannot sign in`);
+  }
+  return users;
+}
+
+/** Compares passwords in constant time (both sides are hashed first, so lengths do not leak). */
+export async function samePassword(secret: string, given: string, expected: string): Promise<boolean> {
+  return same(await hmac(secret, `pw|${given}`), await hmac(secret, `pw|${expected}`));
+}
