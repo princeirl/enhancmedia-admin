@@ -25,8 +25,6 @@ export type FileText = { text: string; sha: string };
 
 export const api = {
   me: () => call<Me>("GET", "/api/me"),
-  authMode: () => call<{ mode: "password" | "code" }>("GET", "/api/auth/mode"),
-  login: (email: string, password: string) => call<{ email: string }>("POST", "/api/auth/login", { email, password }),
   requestCode: (email: string) => call<{ ok: true }>("POST", "/api/auth/request", { email }),
   verifyCode: (code: string) => call<{ email: string }>("POST", "/api/auth/verify", { code }),
   logout: () => call<{ ok: true }>("POST", "/api/auth/logout"),

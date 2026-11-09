@@ -93,29 +93,39 @@ test("the editor list and cookies", () => {
   assert.match(auth.cookie("em_session", "v", 60), /HttpOnly; SameSite=Strict; Secure$/);
 });
 
-test("the code email goes to the Brevo transactional API", async () => {
+async function capture(fn) {
   const real = globalThis.fetch;
   let seen;
-  globalThis.fetch = async (url, init) => { seen = { url, init }; return new Response("{}", { status: 201 }); };
-  try {
-    assert.equal(await auth.sendCode({ apiKey: "KEY", from: "admin@enhancmedia.com", fromName: "Enhanc Media" }, "a@b.co", "123456"), true);
-  } finally {
-    globalThis.fetch = real;
-  }
+  globalThis.fetch = async (url, init) => { seen = { url, init }; return new Response("{}", { status: 200 }); };
+  try { return { result: await fn(), seen }; } finally { globalThis.fetch = real; }
+}
+
+test("codes go out through Resend when its key is set", async () => {
+  const { result, seen } = await capture(() => auth.sendCode({ RESEND_API_KEY: "re_x", BREVO_API_KEY: "b" }, { email: "admin@enhancmedia.com", name: "Enhanc Media Admin" }, "a@b.co", "123456"));
+  assert.equal(result, true);
+  assert.equal(seen.url, "https://api.resend.com/emails");
+  assert.equal(seen.init.headers.Authorization, "Bearer re_x");
+  const body = JSON.parse(seen.init.body);
+  assert.equal(body.from, "Enhanc Media Admin <admin@enhancmedia.com>");
+  assert.deepEqual(body.to, ["a@b.co"]);
+  assert.match(body.subject, /123456/);
+});
+
+test("and through Brevo when only its key is set", async () => {
+  const { seen } = await capture(() => auth.sendCode({ BREVO_API_KEY: "KEY" }, { email: "admin@enhancmedia.com", name: "Enhanc Media" }, "a@b.co", "123456"));
   assert.equal(seen.url, "https://api.brevo.com/v3/smtp/email");
   assert.equal(seen.init.headers["api-key"], "KEY");
   const body = JSON.parse(seen.init.body);
   assert.deepEqual(body.sender, { email: "admin@enhancmedia.com", name: "Enhanc Media" });
   assert.deepEqual(body.to, [{ email: "a@b.co" }]);
-  assert.match(body.subject, /123456/);
-  assert.match(body.textContent, /123456/);
 });
 
-test("password sign-in: parsing and comparison", async () => {
-  const u = auth.parseUsers(" Prince@EnhancMedia.com : correct-horse-battery , short@x.co:abc, bad");
-  assert.deepEqual([...u.keys()], ["prince@enhancmedia.com"], "short passwords and malformed entries are ignored");
-  assert.equal(u.get("prince@enhancmedia.com"), "correct-horse-battery");
-  assert.equal(await auth.samePassword(KEY, "correct-horse-battery", "correct-horse-battery"), true);
-  assert.equal(await auth.samePassword(KEY, "correct-horse-batterY", "correct-horse-battery"), false);
-  assert.equal(await auth.samePassword(KEY, "", "correct-horse-battery"), false);
+test("mail: reply-to and header injection", async () => {
+  const { sendMail } = await import("../worker/mail.ts");
+  const { seen } = await capture(() => sendMail({ RESEND_API_KEY: "k" }, { from: "w@enhancmedia.com", fromName: 'Site "x" <y>', to: "in@enhancmedia.com", replyTo: "v@x.co\r\nBcc: evil@x.co", subject: "Hi\r\nBcc: evil@x.co", text: "t" }));
+  const body = JSON.parse(seen.init.body);
+  assert.equal(body.from, "Site x y <w@enhancmedia.com>");
+  assert.ok(!/[\r\n]/.test(body.subject) && !/[\r\n]/.test(body.reply_to));
+  const none = await sendMail({}, { from: "a", fromName: "b", to: "c", subject: "d", text: "e" });
+  assert.equal(none.ok, false);
 });

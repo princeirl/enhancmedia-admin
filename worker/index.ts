@@ -5,31 +5,31 @@
  * website's content files in the website repository, on the draft branch only; Publish merges
  * the draft into main. Nothing is stored here.
  *
- * Every API request needs a valid session. Sign-in (worker/auth.ts) is by email and password
- * when ADMIN_USERS is set; otherwise by email and a one-time code sent through Brevo, open only
- * to the addresses in ADMIN_EMAILS. Requests that change something
+ * Every API request needs a valid session. Sign-in (worker/auth.ts) is by email and a one-time
+ * code, open only to the addresses in ADMIN_EMAILS; the code is emailed through worker/mail.ts. Requests that change something
  * must also come from this origin with the X-Admin header, so another site cannot make a
  * signed-in editor's browser send them. The interface files hold no data and are served to anyone;
  * everything they show comes from the API.
  */
 import * as auth from "./auth";
+import { mailProvider } from "./mail";
 import * as git from "./git";
 import { MAX_UPLOAD, safeName, sniffImage, unsafeSvg } from "./upload";
 
 /**
  * Configuration. Everything is set in the Cloudflare dashboard (Worker → Settings → Variables and
  * Secrets); wrangler.jsonc holds none of it and has keep_vars, so deploys never remove it.
- * Required: SESSION_SECRET, GITHUB_TOKEN, and either ADMIN_USERS (password sign-in) or
- * ADMIN_EMAILS + BREVO_API_KEY + MAIL_FROM (email-code sign-in). The rest have defaults.
+ * Required: ADMIN_EMAILS, SESSION_SECRET, MAIL_FROM, RESEND_API_KEY (or BREVO_API_KEY),
+ * GITHUB_TOKEN. The rest have defaults.
  */
 interface Env {
   ASSETS: Fetcher;
   AUTH_LIMITER?: RateLimit;
-  ADMIN_USERS?: string; // secret: "email:password,email:password" — password sign-in
-  ADMIN_EMAILS?: string; // comma-separated: who may sign in by email code
+  ADMIN_EMAILS?: string; // comma-separated: who may sign in
   SESSION_SECRET?: string; // secret, at least 32 random characters
-  BREVO_API_KEY?: string; // secret
-  MAIL_FROM?: string; // a sender verified in Brevo
+  RESEND_API_KEY?: string; // secret
+  BREVO_API_KEY?: string; // secret, used if RESEND_API_KEY is not set
+  MAIL_FROM?: string; // a sender on a domain verified with the email provider
   MAIL_FROM_NAME?: string; // default "Enhanc Media"
   GITHUB_TOKEN?: string; // secret
   REPO_OWNER?: string; // default princeirl
@@ -74,13 +74,9 @@ async function identify(request: Request, env: Env, url: URL): Promise<string | 
   const token = auth.readCookie(request, auth.SESSION_COOKIE);
   if (!key || !token) return null; // closed by default
   const email = await auth.checkSession(key, token);
-  if (!email || !editors(env).includes(email)) return null;
+  if (!email || !auth.allowedEmails(env.ADMIN_EMAILS).includes(email)) return null;
   return email;
 }
-
-/** Password sign-in when ADMIN_USERS is set; email-code sign-in otherwise. */
-const mode = (env: Env): "password" | "code" => (env.ADMIN_USERS ? "password" : "code");
-const editors = (env: Env) => (mode(env) === "password" ? [...auth.parseUsers(env.ADMIN_USERS).keys()] : auth.allowedEmails(env.ADMIN_EMAILS));
 
 const sameOrigin = (request: Request, url: URL) => request.headers.get("Origin") === url.origin && request.headers.get("X-Admin") === "1";
 
@@ -91,7 +87,6 @@ async function limited(env: Env, key: string): Promise<boolean> {
 }
 
 async function authRoutes(request: Request, env: Env, url: URL): Promise<Response> {
-  if (url.pathname === "/api/auth/mode" && request.method === "GET") return json({ mode: mode(env) });
   if (request.method !== "POST") return json({ message: "Method not allowed." }, 405);
   if (!sameOrigin(request, url)) return json({ message: "Forbidden." }, 403);
   const local = isLocal(url);
@@ -102,23 +97,9 @@ async function authRoutes(request: Request, env: Env, url: URL): Promise<Respons
   }
 
   const key = secret(env);
-  if (url.pathname === "/api/auth/login") {
-    if (!key || mode(env) !== "password") return json({ message: "Sign-in is not set up yet (ADMIN_USERS, SESSION_SECRET)." }, 503);
-    const body = (await request.json().catch(() => ({}))) as { email?: string; password?: string };
-    const email = String(body.email ?? "").trim().toLowerCase();
-    const password = String(body.password ?? "");
-    if ((await limited(env, `pw:ip:${ip}`)) || (await limited(env, `pw:em:${email}`))) {
-      return json({ message: "Too many attempts. Please wait a minute and try again." }, 429);
-    }
-    const expected = auth.parseUsers(env.ADMIN_USERS).get(email);
-    // Compare even for unknown addresses, so timing does not reveal who is listed.
-    const ok = await auth.samePassword(key, password, expected ?? "\u0000no-user");
-    if (!expected || !ok) return json({ message: "That email and password do not match." }, 401);
-    return json({ email }, 200, { "Set-Cookie": auth.cookie(auth.SESSION_COOKIE, await auth.makeSession(key, email), auth.SESSION_TTL, "/", !local) });
-  }
-
-  if (!key || !env.ADMIN_EMAILS || (!env.BREVO_API_KEY && !local) || (!env.MAIL_FROM && !local)) {
-    return json({ message: "Sign-in is not set up yet (ADMIN_EMAILS, SESSION_SECRET, BREVO_API_KEY, MAIL_FROM)." }, 503);
+  const provider = mailProvider(env);
+  if (!key || !env.ADMIN_EMAILS || (!provider && !local) || (!env.MAIL_FROM && !local)) {
+    return json({ message: "Sign-in is not set up yet (ADMIN_EMAILS, SESSION_SECRET, MAIL_FROM, RESEND_API_KEY)." }, 503);
   }
   const body = (await request.json().catch(() => ({}))) as { email?: string; code?: string };
 
@@ -131,8 +112,8 @@ async function authRoutes(request: Request, env: Env, url: URL): Promise<Respons
     const code = auth.newCode();
     const listed = auth.allowedEmails(env.ADMIN_EMAILS).includes(email);
     if (listed) {
-      if (env.BREVO_API_KEY) {
-        const sent = await auth.sendCode({ apiKey: env.BREVO_API_KEY, from: env.MAIL_FROM!, fromName: env.MAIL_FROM_NAME || "Enhanc Media" }, email, code);
+      if (provider) {
+        const sent = await auth.sendCode(env, { email: env.MAIL_FROM!, name: env.MAIL_FROM_NAME || "Enhanc Media Admin" }, email, code);
         if (!sent) return json({ message: "The code could not be sent just now. Please try again shortly." }, 502);
       } else if (local) {
         console.log(`auth (local, no email sent): code for ${email} is ${code}`);

@@ -2,8 +2,8 @@
 
 Edits every text, image, menu and setting of www.enhancmedia.com. Same stack as the website
 (Next.js static export, TypeScript, Tailwind CSS, one Cloudflare Worker), its own repository,
-deployed separately at **admin.enhancmedia.com**. Editors sign in with email and password
-(or, optionally, email and a one-time code sent through Brevo).
+deployed separately at **admin.enhancmedia.com**. Editors sign in with their email address and
+a one-time code sent by email (Resend, or Brevo).
 
 Plan and decisions: `.project/plans/2026-11/2026-11-09-admin-panel.md` and
 `.project/memory/2026-11-09-admin-panel-decision.md` in the project records.
@@ -11,7 +11,7 @@ Plan and decisions: `.project/plans/2026-11/2026-11-09-admin-panel.md` and
 ## How it works
 
 ```
-browser ── admin Worker ── sign-in: email + password (or email + code through Brevo)
+browser ── admin Worker ── sign-in: listed email + 6-digit code (sent through worker/mail.ts)
                                                                  │  signed session cookie, 12 hours
                                                                  │  GitHub API, fine-grained token
                                                                  ▼
@@ -53,29 +53,13 @@ scripts/      schema-sync check, unit tests, a local stand-in for the GitHub API
 | `npm run dev` | Builds and runs locally at http://127.0.0.1:8788 (see "Local development") |
 | `npm run typecheck` | Type-checks the interface and the Worker |
 | `npm test` | Unit tests: upload checks, schema validation, sign-in |
-| `npm run check:schema` | Confirms `lib/schema.mjs` matches `../website/lib/schema.mjs` |
+| `npm run check:schema` | Confirms `lib/schema.mjs` and `worker/mail.ts` match the website's copies |
 | `npm run deploy` | Type check, build, deploy (from a machine with a Cloudflare login) |
 
 ## Signing in
 
-Two ways, chosen by the variables that are set. **Password sign-in is on whenever
-`ADMIN_USERS` is set**; otherwise the email-code sign-in is used.
-
-### Email and password (current)
-
-- `ADMIN_USERS` (a secret) lists the editors: `email:password,email:password`. Passwords must be
-  at least 12 characters and may not contain commas; shorter ones are ignored.
-- Wrong password and unknown email get the same answer; attempts are limited to 5 a minute per
-  address and per IP. A successful sign-in gives a 12-hour session.
-- **Add, remove an editor or change a password:** edit `ADMIN_USERS` and redeploy.
-
-### Email and one-time code (Brevo, optional)
-
-Remove `ADMIN_USERS` and set `ADMIN_EMAILS`, `BREVO_API_KEY` and `MAIL_FROM`. Brevo's
-"authorised IPs" blocking must be off for the API key: Workers have no fixed outgoing IP.
-
 1. The editor enters their email. If it is in `ADMIN_EMAILS`, a 6-digit code is emailed through
-   Brevo. The page answers the same either way, so it never reveals who is listed.
+   the email API (`worker/mail.ts`: Resend if `RESEND_API_KEY` is set, otherwise Brevo). The page answers the same either way, so it never reveals who is listed.
 2. The editor enters the code (valid 10 minutes) and gets a session for 12 hours.
 
 - Nothing is stored: the code challenge and the session are HMAC-signed cookies (`HttpOnly`,
@@ -95,11 +79,11 @@ None live in `wrangler.jsonc` or in GitHub; `keep_vars: true` stops deploys from
 | Name | Type | Value |
 |---|---|---|
 | `SESSION_SECRET` | Secret, required | At least 32 random characters: `openssl rand -base64 32` |
-| `ADMIN_USERS` | Secret, required for password sign-in | `prince@enhancmedia.com:a-long-password,editor@enhancmedia.com:another-long-one` |
-| `ADMIN_EMAILS` | Text, code sign-in only | Who may sign in, comma-separated |
-| `BREVO_API_KEY` | Secret, code sign-in only | Brevo → SMTP & API → API keys |
-| `MAIL_FROM` | Text, code sign-in only | A sender verified in Brevo, e.g. `admin@enhancmedia.com` |
-| `MAIL_FROM_NAME` | Text | Default `Enhanc Media` |
+| `ADMIN_EMAILS` | Text, required | Who may sign in, comma-separated: `prince@enhancmedia.com,editor@enhancmedia.com` |
+| `RESEND_API_KEY` | Secret, required | Resend → API Keys (sending access to `enhancmedia.com`). The same key as the website's is fine. |
+| `MAIL_FROM` | Text, required | An address on the domain verified in Resend, e.g. `admin@enhancmedia.com` |
+| `MAIL_FROM_NAME` | Text | Default `Enhanc Media Admin` |
+| `BREVO_API_KEY` | Secret | Only instead of Resend (needs Brevo's authorised-IP blocking off: Workers have no fixed IP) |
 | `GITHUB_TOKEN` | Secret, required | Fine-grained token for `princeirl/enhancmedia` only: *Contents: Read and write*, *Commit statuses: Read* (and *Checks: Read* if offered). The admin uses it to read and commit the website's content. |
 | `PREVIEW_URL` | Text | The website's `content-draft` preview URL, e.g. `https://content-draft-enhancmedia-website.<subdomain>.workers.dev` |
 | `SITE_URL` | Text | Default `https://www.enhancmedia.com` |
@@ -110,13 +94,15 @@ None live in `wrangler.jsonc` or in GitHub; `keep_vars: true` stops deploys from
 
 ## Setting up (once)
 
-1. **Website builds** — connect `princeirl/enhancmedia` to the Worker `enhancmedia-website` in
+1. **Resend** — add and verify `enhancmedia.com` (records go on a `send.` sub-name; Zoho mail
+   is untouched), create an API key.
+2. **Website builds** — connect `princeirl/enhancmedia` to the Worker `enhancmedia-website` in
    Workers Builds, with the settings in the website README → Deployment, and turn on builds for
    non-production branches. The admin creates the branch `content-draft` on first use.
-2. **Admin Worker** — connect this repository to a Worker named `enhancmedia-admin` in Workers
+3. **Admin Worker** — connect this repository to a Worker named `enhancmedia-admin` in Workers
    Builds: build command `npm run build`, deploy command `npx wrangler deploy`. Wrangler attaches
    `admin.enhancmedia.com` as a custom domain.
-3. **Variables** — set the table above in the dashboard, then redeploy (or *Retry build*).
+4. **Variables** — set the table above in the dashboard, then redeploy (or *Retry build*).
 
 ## Local development
 
@@ -142,6 +128,7 @@ ever declare a newer `$format`, the admin stops and says it needs an update rath
 ## Leaving GitHub or Cloudflare
 
 - Another git host: re-implement `worker/git.ts` (one module) against its API.
-- Another email service: replace `sendCode()` in `worker/auth.ts` (one function).
+- Another email service: one more branch in `worker/mail.ts` (shared with the website), or set
+  `BREVO_API_KEY` instead of `RESEND_API_KEY`.
 - Another host: the interface is static files in `out/`; the API is one Worker file with no
   platform storage.
