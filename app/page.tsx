@@ -64,10 +64,11 @@ function App() {
 
   // While a preview is building, check every 10 seconds.
   useEffect(() => {
+    if (!me || signedOut) return; // nothing to watch before signing in
     const building = state?.build?.state === "pending";
     const t = setInterval(refresh, building ? 10_000 : 60_000);
     return () => clearInterval(t);
-  }, [state, refresh]);
+  }, [state, refresh, me, signedOut]);
 
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
