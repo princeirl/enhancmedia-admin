@@ -10,7 +10,7 @@ import { defaultFor, type Store } from "@/lib/docs";
 import { selectOptions } from "@/lib/schema.mjs";
 import type { Field, Json, Obj } from "@/lib/types";
 
-type Props = { field: Field; value: Json | undefined; onChange: (v: Json | undefined) => void; store: Store; id: string };
+type Props = { field: Field; value: Json | undefined; onChange: (v: Json | undefined) => void; store: Store; id: string; showAdvanced?: boolean };
 
 export function FieldsEditor({ fields, value, onChange, store, id, showAdvanced }: {
   fields: Field[];
@@ -31,6 +31,7 @@ export function FieldsEditor({ fields, value, onChange, store, id, showAdvanced 
             field={f}
             value={value[f.name]}
             store={store}
+            showAdvanced={showAdvanced}
             onChange={(v) => {
               const next = { ...value };
               if (v === undefined) delete next[f.name];
@@ -97,7 +98,7 @@ function Shell({ field: f, id, children, clear }: Props & { children: React.Reac
   );
 }
 
-function Control({ field: f, value, onChange, store, id }: Props) {
+function Control({ field: f, value, onChange, store, id, showAdvanced }: Props) {
   switch (f.type) {
     case "text":
     case "url":
@@ -173,9 +174,9 @@ function Control({ field: f, value, onChange, store, id }: Props) {
     case "image":
       return <ImageControl id={id} value={String(value ?? "")} onChange={onChange} />;
     case "object":
-      return <FieldsEditor fields={f.fields ?? []} value={(value ?? {}) as Obj} onChange={onChange} store={store} id={id} />;
+      return <FieldsEditor fields={f.fields ?? []} value={(value ?? {}) as Obj} onChange={onChange} store={store} id={id} showAdvanced={showAdvanced} />;
     case "list":
-      return <ListControl field={f} value={(value ?? []) as Json[]} onChange={onChange} store={store} id={id} />;
+      return <ListControl field={f} value={(value ?? []) as Json[]} onChange={onChange} store={store} id={id} showAdvanced={showAdvanced} />;
     default:
       return <p className="text-sm text-danger">Unknown field type “{f.type}”. The admin needs an update for it.</p>;
   }
@@ -240,7 +241,7 @@ function ImageControl({ id, value, onChange }: { id: string; value: string; onCh
   );
 }
 
-function ListControl({ field: f, value, onChange, store, id }: { field: Field; value: Json[]; onChange: (v: Json[]) => void; store: Store; id: string }) {
+function ListControl({ field: f, value, onChange, store, id, showAdvanced }: { field: Field; value: Json[]; onChange: (v: Json[]) => void; store: Store; id: string; showAdvanced?: boolean }) {
   const of = f.of!;
   const complex = of.type === "object";
   const [open, setOpen] = useState<number | null>(null);
@@ -271,7 +272,7 @@ function ListControl({ field: f, value, onChange, store, id }: { field: Field; v
                   {title(v, i)}
                 </button>
               ) : (
-                <Control field={{ ...of, label: `${f.label} ${i + 1}` }} value={v} store={store} id={`${id}-${i}`} onChange={(nv) => onChange(value.map((x, k) => (k === i ? (nv as Json) : x)))} />
+                <Control field={{ ...of, label: `${f.label} ${i + 1}` }} value={v} store={store} id={`${id}-${i}`} showAdvanced={showAdvanced} onChange={(nv) => onChange(value.map((x, k) => (k === i ? (nv as Json) : x)))} />
               )}
             </div>
             <div className="flex shrink-0 items-center gap-1 pt-1">
@@ -282,7 +283,7 @@ function ListControl({ field: f, value, onChange, store, id }: { field: Field; v
           </div>
           {complex && open === i && (
             <div className="border-t border-line p-4">
-              <FieldsEditor fields={of.fields ?? []} value={(v ?? {}) as Obj} store={store} id={`${id}-${i}`} onChange={(nv) => onChange(value.map((x, k) => (k === i ? nv : x)))} />
+              <FieldsEditor fields={of.fields ?? []} value={(v ?? {}) as Obj} store={store} id={`${id}-${i}`} showAdvanced={showAdvanced} onChange={(nv) => onChange(value.map((x, k) => (k === i ? nv : x)))} />
             </div>
           )}
         </div>
