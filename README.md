@@ -3,7 +3,7 @@
 Edits every text, image, menu and setting of www.enhancmedia.com. Same stack as the website
 (Next.js static export, TypeScript, Tailwind CSS, one Cloudflare Worker), its own repository,
 deployed separately at **admin.enhancmedia.com**. Editors sign in with their email address and
-a one-time code sent by email (Resend, or Brevo).
+a one-time code sent by email (Zoho ZeptoMail).
 
 Plan and decisions: `.project/plans/2026-11/2026-11-09-admin-panel.md` and
 `.project/memory/2026-11-09-admin-panel-decision.md` in the project records.
@@ -59,7 +59,7 @@ scripts/      schema-sync check, unit tests, a local stand-in for the GitHub API
 ## Signing in
 
 1. The editor enters their email. If it is in `ADMIN_EMAILS`, a 6-digit code is emailed through
-   the email API (`worker/mail.ts`: Resend if `RESEND_API_KEY` is set, otherwise Brevo). The page answers the same either way, so it never reveals who is listed.
+   the email API (`worker/mail.ts`: ZeptoMail; Resend or Brevo if their key is set instead). The page answers the same either way, so it never reveals who is listed.
 2. The editor enters the code (valid 10 minutes) and gets a session for 12 hours.
 
 - Nothing is stored: the code challenge and the session are HMAC-signed cookies (`HttpOnly`,
@@ -80,10 +80,11 @@ None live in `wrangler.jsonc` or in GitHub; `keep_vars: true` stops deploys from
 |---|---|---|
 | `SESSION_SECRET` | Secret, required | At least 32 random characters: `openssl rand -base64 32` |
 | `ADMIN_EMAILS` | Text, required | Who may sign in, comma-separated: `prince@enhancmedia.com,editor@enhancmedia.com` |
-| `RESEND_API_KEY` | Secret, required | Resend → API Keys (sending access to `enhancmedia.com`). The same key as the website's is fine. |
-| `MAIL_FROM` | Text, required | An address on the domain verified in Resend, e.g. `admin@enhancmedia.com` |
+| `ZEPTOMAIL_API_KEY` | Secret, required | ZeptoMail → Mail Agents → SMTP/API → API → *Send Mail token*. The same token as the website's is fine. |
+| `MAIL_FROM` | Text, required | An address on the domain verified in ZeptoMail, e.g. `admin@enhancmedia.com` |
+| `ZEPTOMAIL_HOST` | Text | Only for an account outside India: `api.zeptomail.com` or `api.zeptomail.eu` |
 | `MAIL_FROM_NAME` | Text | Default `Enhanc Media Admin` |
-| `BREVO_API_KEY` | Secret | Only instead of Resend (needs Brevo's authorised-IP blocking off: Workers have no fixed IP) |
+| `RESEND_API_KEY` / `BREVO_API_KEY` | Secret | Only instead of ZeptoMail (Brevo needs its authorised-IP blocking off: Workers have no fixed IP) |
 | `GITHUB_TOKEN` | Secret, required | Fine-grained token for `princeirl/enhancmedia` only: *Contents: Read and write*, *Commit statuses: Read* (and *Checks: Read* if offered). The admin uses it to read and commit the website's content. |
 | `PREVIEW_URL` | Text | The website's `content-draft` preview URL, e.g. `https://content-draft-enhancmedia-website.<subdomain>.workers.dev` |
 | `SITE_URL` | Text | Default `https://www.enhancmedia.com` |
@@ -94,8 +95,8 @@ None live in `wrangler.jsonc` or in GitHub; `keep_vars: true` stops deploys from
 
 ## Setting up (once)
 
-1. **Resend** — add and verify `enhancmedia.com` (records go on a `send.` sub-name; Zoho mail
-   is untouched), create an API key.
+1. **ZeptoMail** — add and verify `enhancmedia.com` (DKIM TXT + bounce CNAME in Cloudflare DNS;
+   Zoho Mail records untouched), copy the agent's Send Mail token.
 2. **Website builds** — connect `princeirl/enhancmedia` to the Worker `enhancmedia-website` in
    Workers Builds, with the settings in the website README → Deployment, and turn on builds for
    non-production branches. The admin creates the branch `content-draft` on first use.
@@ -128,7 +129,7 @@ ever declare a newer `$format`, the admin stops and says it needs an update rath
 ## Leaving GitHub or Cloudflare
 
 - Another git host: re-implement `worker/git.ts` (one module) against its API.
-- Another email service: one more branch in `worker/mail.ts` (shared with the website), or set
-  `BREVO_API_KEY` instead of `RESEND_API_KEY`.
+- Another email service: set `RESEND_API_KEY` or `BREVO_API_KEY` instead of
+  `ZEPTOMAIL_API_KEY`, or add one more branch in `worker/mail.ts` (shared with the website).
 - Another host: the interface is static files in `out/`; the API is one Worker file with no
   platform storage.

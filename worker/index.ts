@@ -19,7 +19,7 @@ import { MAX_UPLOAD, safeName, sniffImage, unsafeSvg } from "./upload";
 /**
  * Configuration. Everything is set in the Cloudflare dashboard (Worker → Settings → Variables and
  * Secrets); wrangler.jsonc holds none of it and has keep_vars, so deploys never remove it.
- * Required: ADMIN_EMAILS, SESSION_SECRET, MAIL_FROM, RESEND_API_KEY (or BREVO_API_KEY),
+ * Required: ADMIN_EMAILS, SESSION_SECRET, MAIL_FROM, ZEPTOMAIL_API_KEY (or RESEND_/BREVO_API_KEY),
  * GITHUB_TOKEN. The rest have defaults.
  */
 interface Env {
@@ -27,8 +27,10 @@ interface Env {
   AUTH_LIMITER?: RateLimit;
   ADMIN_EMAILS?: string; // comma-separated: who may sign in
   SESSION_SECRET?: string; // secret, at least 32 random characters
-  RESEND_API_KEY?: string; // secret
-  BREVO_API_KEY?: string; // secret, used if RESEND_API_KEY is not set
+  ZEPTOMAIL_API_KEY?: string; // secret: Zoho ZeptoMail Send Mail token
+  ZEPTOMAIL_HOST?: string; // default api.zeptomail.in
+  RESEND_API_KEY?: string; // secret, used if ZEPTOMAIL_API_KEY is not set
+  BREVO_API_KEY?: string; // secret, used if neither is set
   MAIL_FROM?: string; // a sender on a domain verified with the email provider
   MAIL_FROM_NAME?: string; // default "Enhanc Media"
   GITHUB_TOKEN?: string; // secret
@@ -99,7 +101,7 @@ async function authRoutes(request: Request, env: Env, url: URL): Promise<Respons
   const key = secret(env);
   const provider = mailProvider(env);
   if (!key || !env.ADMIN_EMAILS || (!provider && !local) || (!env.MAIL_FROM && !local)) {
-    return json({ message: "Sign-in is not set up yet (ADMIN_EMAILS, SESSION_SECRET, MAIL_FROM, RESEND_API_KEY)." }, 503);
+    return json({ message: "Sign-in is not set up yet (ADMIN_EMAILS, SESSION_SECRET, MAIL_FROM, ZEPTOMAIL_API_KEY)." }, 503);
   }
   const body = (await request.json().catch(() => ({}))) as { email?: string; code?: string };
 

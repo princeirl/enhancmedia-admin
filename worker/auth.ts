@@ -2,7 +2,7 @@
  * Sign-in by email and one-time code.
  *
  * 1. POST /api/auth/request {email}: if the address is listed in ADMIN_EMAILS, a 6-digit code is
- *    emailed (worker/mail.ts: Resend, or Brevo) and a signed challenge is set as an HttpOnly cookie. The reply is the same
+ *    emailed (worker/mail.ts: Zoho ZeptoMail by default) and a signed challenge is set as an HttpOnly cookie. The reply is the same
  *    whether or not the address is listed, so it reveals nothing.
  * 2. POST /api/auth/verify {code}: the code is checked against the challenge; on success a signed
  *    session cookie is set for 12 hours.

@@ -100,6 +100,28 @@ async function capture(fn) {
   try { return { result: await fn(), seen }; } finally { globalThis.fetch = real; }
 }
 
+test("codes go out through ZeptoMail when its key is set (India data centre by default)", async () => {
+  const { result, seen } = await capture(() => auth.sendCode({ ZEPTOMAIL_API_KEY: "Zoho-enczapikey abc==", RESEND_API_KEY: "re" }, { email: "admin@enhancmedia.com", name: "Enhanc Media Admin" }, "a@b.co", "123456"));
+  assert.equal(result, true);
+  assert.equal(seen.url, "https://api.zeptomail.in/v1.1/email");
+  assert.equal(seen.init.headers.Authorization, "Zoho-enczapikey abc==");
+  const body = JSON.parse(seen.init.body);
+  assert.deepEqual(body.from, { address: "admin@enhancmedia.com", name: "Enhanc Media Admin" });
+  assert.deepEqual(body.to, [{ email_address: { address: "a@b.co" } }]);
+  assert.match(body.subject, /123456/);
+  assert.match(body.htmlbody, /123456/);
+});
+
+test("ZeptoMail: token without prefix, other data centre, plain text gets an escaped HTML body", async () => {
+  const { sendMail } = await import("../worker/mail.ts");
+  const { seen } = await capture(() => sendMail({ ZEPTOMAIL_API_KEY: "abc==", ZEPTOMAIL_HOST: "https://api.zeptomail.com/" }, { from: "w@enhancmedia.com", fromName: "Site", to: "in@enhancmedia.com", replyTo: "v@x.co", subject: "s", text: "<b>hi</b>" }));
+  assert.equal(seen.url, "https://api.zeptomail.com/v1.1/email");
+  assert.equal(seen.init.headers.Authorization, "Zoho-enczapikey abc==");
+  const body = JSON.parse(seen.init.body);
+  assert.deepEqual(body.reply_to, [{ address: "v@x.co" }]);
+  assert.ok(!body.htmlbody.includes("<b>") && body.htmlbody.includes("&#60;b&#62;"));
+});
+
 test("codes go out through Resend when its key is set", async () => {
   const { result, seen } = await capture(() => auth.sendCode({ RESEND_API_KEY: "re_x", BREVO_API_KEY: "b" }, { email: "admin@enhancmedia.com", name: "Enhanc Media Admin" }, "a@b.co", "123456"));
   assert.equal(result, true);
@@ -128,4 +150,10 @@ test("mail: reply-to and header injection", async () => {
   assert.ok(!/[\r\n]/.test(body.subject) && !/[\r\n]/.test(body.reply_to));
   const none = await sendMail({}, { from: "a", fromName: "b", to: "c", subject: "d", text: "e" });
   assert.equal(none.ok, false);
+});
+
+test("ZeptoMail host must be a ZeptoMail API host", async () => {
+  const { sendMail } = await import("../worker/mail.ts");
+  const { seen } = await capture(() => sendMail({ ZEPTOMAIL_API_KEY: "k", ZEPTOMAIL_HOST: "evil.example.com" }, { from: "a@b.co", fromName: "x", to: "c@d.co", subject: "s", text: "t" }));
+  assert.equal(seen.url, "https://api.zeptomail.in/v1.1/email");
 });
